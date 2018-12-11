@@ -1,0 +1,5 @@
+{
+    "files.associations": {
+        "linux-syscalls.h": "c"
+    }
+}
