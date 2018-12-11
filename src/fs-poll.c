@@ -19,6 +19,7 @@
  * IN THE SOFTWARE.
  */
 
+
 #include "uv.h"
 #include "uv-common.h"
 
@@ -273,4 +274,4 @@ void uv__fs_poll_endgame(uv_loop_t* loop, uv_fs_poll_t* handle) {
   uv__handle_close(handle);
 }
 
-#endif /* _WIN32 */
+#endif /* _WIN32 *i/
