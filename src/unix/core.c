@@ -316,12 +316,13 @@ int uv_backend_fd(const uv_loop_t* loop) {
 
 
 int uv_backend_timeout(const uv_loop_t* loop) {
+  // 即使设置了stop_flag=1也继续阻塞式poll io
   if (loop->stop_flag != 0)
     return 0;
-
+  // 没有活跃的handles和req则阻塞式poll io
   if (!uv__has_active_handles(loop) && !uv__has_active_reqs(loop))
     return 0;
-
+  // 
   if (!QUEUE_EMPTY(&loop->idle_handles))
     return 0;
 
@@ -357,20 +358,25 @@ int uv_run(uv_loop_t* loop, uv_run_mode mode) {
     uv__update_time(loop);
 
   while (r != 0 && loop->stop_flag == 0) {
+    // 更新loop的time字段
     uv__update_time(loop);
+    // 执行超时回调
     uv__run_timers(loop);
+    // 执行pending回调，ran_pending代表pending队列是否为空，即没有节点可以执行
     ran_pending = uv__run_pending(loop);
+    // 继续执行各种队列
     uv__run_idle(loop);
     uv__run_prepare(loop);
 
     timeout = 0;
+    // UV_RUN_ONCE并且有pending节点的时候，会阻塞式poll io，默认模式也是
     if ((mode == UV_RUN_ONCE && !ran_pending) || mode == UV_RUN_DEFAULT)
       timeout = uv_backend_timeout(loop);
-
+    // poll io timeout是epoll_wait的超时时间
     uv__io_poll(loop, timeout);
     uv__run_check(loop);
     uv__run_closing_handles(loop);
-
+    // 还有一次执行超时回调的机会
     if (mode == UV_RUN_ONCE) {
       /* UV_RUN_ONCE implies forward progress: at least one callback must have
        * been invoked when it returns. uv__io_poll() can return without doing

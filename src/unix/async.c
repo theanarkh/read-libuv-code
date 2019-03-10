@@ -108,7 +108,12 @@ static void uv__async_io(uv_loop_t* loop, uv__io_t* w, unsigned int events) {
 
     QUEUE_REMOVE(q);
     QUEUE_INSERT_TAIL(&loop->async_handles, q);
-
+    /*
+      将第一个参数和第二个参数进行比较，如果相等，
+      则将第三参数写入第一个参数，返回第二个参数的值，
+      如果不相等，则返回第一个参数的值。
+    */
+    // pending在uv_async_send里设置成1，如果pending等于1，则清0，返回1.如果pending等于0，则返回0
     if (cmpxchgi(&h->pending, 1, 0) == 0)
       continue;
 
@@ -131,14 +136,16 @@ static void uv__async_send(uv_loop_t* loop) {
   fd = loop->async_wfd;
 
 #if defined(__linux__)
+  // 说明用的是eventfd而不是管道
   if (fd == -1) {
     static const uint64_t val = 1;
     buf = &val;
     len = sizeof(val);
+    // 见uv__async_start
     fd = loop->async_io_watcher.fd;  /* eventfd */
   }
 #endif
-
+  // 通知读端
   do
     r = write(fd, buf, len);
   while (r == -1 && errno == EINTR);

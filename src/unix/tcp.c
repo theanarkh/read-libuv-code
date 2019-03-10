@@ -33,12 +33,12 @@ static int new_socket(uv_tcp_t* handle, int domain, unsigned long flags) {
   socklen_t slen;
   int sockfd;
   int err;
-
+  // 获取一个socket
   err = uv__socket(domain, SOCK_STREAM, 0);
   if (err < 0)
     return err;
   sockfd = err;
-
+  // 设置选项和保存socket的文件描述符到io观察者中
   err = uv__stream_open((uv_stream_t*) handle, sockfd, flags);
   if (err) {
     uv__close(sockfd);
@@ -115,10 +115,11 @@ int uv_tcp_init_ex(uv_loop_t* loop, uv_tcp_t* tcp, unsigned int flags) {
   int domain;
 
   /* Use the lower 8 bits for the domain */
+  // 低八位是domain
   domain = flags & 0xFF;
   if (domain != AF_INET && domain != AF_INET6 && domain != AF_UNSPEC)
     return UV_EINVAL;
-
+  // 除了第八位的其他位是flags
   if (flags & ~0xFF)
     return UV_EINVAL;
 
@@ -131,6 +132,7 @@ int uv_tcp_init_ex(uv_loop_t* loop, uv_tcp_t* tcp, unsigned int flags) {
   if (domain != AF_UNSPEC) {
     int err = maybe_new_socket(tcp, domain, 0);
     if (err) {
+      // 出错则把该handle移除loop队列
       QUEUE_REMOVE(&tcp->handle_queue);
       return err;
     }
@@ -139,8 +141,9 @@ int uv_tcp_init_ex(uv_loop_t* loop, uv_tcp_t* tcp, unsigned int flags) {
   return 0;
 }
 
-
+// 初始化一个tcp流的结构体
 int uv_tcp_init(uv_loop_t* loop, uv_tcp_t* tcp) {
+  // 未指定未指定协议
   return uv_tcp_init_ex(loop, tcp, AF_UNSPEC);
 }
 
@@ -355,7 +358,9 @@ int uv_tcp_listen(uv_tcp_t* tcp, int backlog, uv_connection_cb cb) {
   tcp->flags |= UV_HANDLE_BOUND;
 
   /* Start listening for connections. */
+  // 有连接到来时的libuv层回调
   tcp->io_watcher.cb = uv__server_io;
+  // 注册事件
   uv__io_start(tcp->loop, &tcp->io_watcher, POLLIN);
 
   return 0;

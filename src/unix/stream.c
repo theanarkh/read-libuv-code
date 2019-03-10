@@ -73,7 +73,7 @@ static void uv__stream_io(uv_loop_t* loop, uv__io_t* w, unsigned int events);
 static void uv__write_callbacks(uv_stream_t* stream);
 static size_t uv__write_req_size(uv_write_t* req);
 
-
+// 初始化流
 void uv__stream_init(uv_loop_t* loop,
                      uv_stream_t* stream,
                      uv_handle_type type) {
@@ -107,7 +107,7 @@ void uv__stream_init(uv_loop_t* loop,
 #if defined(__APPLE__)
   stream->select = NULL;
 #endif /* defined(__APPLE_) */
-
+  // 初始化io观察者
   uv__io_init(&stream->io_watcher, uv__stream_io, -1);
 }
 
@@ -425,7 +425,7 @@ int uv__stream_open(uv_stream_t* stream, int fd, int flags) {
     return UV__ERR(errno);
   }
 #endif
-
+   // 保存socket对应的文件描述符到io观察者中，libuv会在io poll阶段监听该文件描述符
   stream->io_watcher.fd = fd;
 
   return 0;
@@ -525,7 +525,7 @@ void uv__server_io(uv_loop_t* loop, uv__io_t* w, unsigned int events) {
   assert(events & POLLIN);
   assert(stream->accepted_fd == -1);
   assert(!(stream->flags & UV_HANDLE_CLOSING));
-
+  // 继续注册事件,等待连接
   uv__io_start(stream->loop, &stream->io_watcher, POLLIN);
 
   /* connection_cb can close the server socket while we're
@@ -558,6 +558,7 @@ void uv__server_io(uv_loop_t* loop, uv__io_t* w, unsigned int events) {
     }
 
     UV_DEC_BACKLOG(w)
+    // 保存连接对应的socket
     stream->accepted_fd = err;
     stream->connection_cb(stream, 0);
 

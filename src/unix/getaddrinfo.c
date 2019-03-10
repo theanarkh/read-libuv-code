@@ -94,17 +94,18 @@ int uv__getaddrinfo_translate_error(int sys_err) {
   return 0;  /* Pacify compiler. */
 }
 
-
+// dns解析的工作函数
 static void uv__getaddrinfo_work(struct uv__work* w) {
   uv_getaddrinfo_t* req;
   int err;
-
+  // 根据结构体的字段获取结构体首地址
   req = container_of(w, uv_getaddrinfo_t, work_req);
+  // 阻塞在这
   err = getaddrinfo(req->hostname, req->service, req->hints, &req->addrinfo);
   req->retcode = uv__getaddrinfo_translate_error(err);
 }
 
-
+// dns解析完执行的函数
 static void uv__getaddrinfo_done(struct uv__work* w, int status) {
   uv_getaddrinfo_t* req;
 
@@ -112,6 +113,7 @@ static void uv__getaddrinfo_done(struct uv__work* w, int status) {
   uv__req_unregister(req->loop, req);
 
   /* See initialization in uv_getaddrinfo(). */
+  // 释放初始化时申请的内存
   if (req->hints)
     uv__free(req->hints);
   else if (req->service)
@@ -129,14 +131,16 @@ static void uv__getaddrinfo_done(struct uv__work* w, int status) {
     assert(req->retcode == 0);
     req->retcode = UV_EAI_CANCELED;
   }
-
+  // 执行上层回调
   if (req->cb)
     req->cb(req, req->retcode, req->addrinfo);
 }
 
-
+// dns解析的入口函数
 int uv_getaddrinfo(uv_loop_t* loop,
+                  // 上层传进来的req
                    uv_getaddrinfo_t* req,
+                   // 解析完后的上层回调
                    uv_getaddrinfo_cb cb,
                    const char* hostname,
                    const char* service,
@@ -160,6 +164,7 @@ int uv_getaddrinfo(uv_loop_t* loop,
 
   uv__req_init(loop, req, UV_GETADDRINFO);
   req->loop = loop;
+  // 设置请求的回调
   req->cb = cb;
   req->addrinfo = NULL;
   req->hints = NULL;
@@ -182,15 +187,16 @@ int uv_getaddrinfo(uv_loop_t* loop,
 
   if (hostname)
     req->hostname = memcpy(buf + len, hostname, hostname_len);
-
+  // 传了cb是异步
   if (cb) {
     uv__work_submit(loop,
-                    &req->work_req,
+                    &req->wor k_req,
                     UV__WORK_SLOW_IO,
                     uv__getaddrinfo_work,
                     uv__getaddrinfo_done);
     return 0;
   } else {
+    // 阻塞式查询，然后执行回调
     uv__getaddrinfo_work(&req->work_req);
     uv__getaddrinfo_done(&req->work_req, 0);
     return req->retcode;
