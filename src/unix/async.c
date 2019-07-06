@@ -60,7 +60,7 @@ int uv_async_send(uv_async_t* handle) {
   /* Do a cheap read first. */
   if (ACCESS_ONCE(int, handle->pending) != 0)
     return 0;
-
+  // 如pending是0，则设置为1，返回0，如果是1则返回1，所以如果多次调用该函数是会被合并的
   if (cmpxchgi(&handle->pending, 0, 1) == 0)
     uv__async_send(handle->loop);
 
@@ -84,6 +84,7 @@ static void uv__async_io(uv_loop_t* loop, uv__io_t* w, unsigned int events) {
   assert(w == &loop->async_io_watcher);
 
   for (;;) {
+    // 判断通信内容
     r = read(w->fd, buf, sizeof(buf));
 
     if (r == sizeof(buf))
@@ -100,26 +101,29 @@ static void uv__async_io(uv_loop_t* loop, uv__io_t* w, unsigned int events) {
 
     abort();
   }
-
+  // 把async_handles队列里的所有节点都移到queue变量中
   QUEUE_MOVE(&loop->async_handles, &queue);
   while (!QUEUE_EMPTY(&queue)) {
+    // 逐个取出节点
     q = QUEUE_HEAD(&queue);
+    // 根据结构体字段获取结构体首地址
     h = QUEUE_DATA(q, uv_async_t, queue);
-
+    // 从队列中移除该节点
     QUEUE_REMOVE(q);
+    // 重新插入async_handles队列，等待下次事件
     QUEUE_INSERT_TAIL(&loop->async_handles, q);
     /*
       将第一个参数和第二个参数进行比较，如果相等，
       则将第三参数写入第一个参数，返回第二个参数的值，
       如果不相等，则返回第一个参数的值。
     */
-    // pending在uv_async_send里设置成1，如果pending等于1，则清0，返回1.如果pending等于0，则返回0
+    //判断哪些async被触发了。pending在uv_async_send里设置成1，如果pending等于1，则清0，返回1.如果pending等于0，则返回0
     if (cmpxchgi(&h->pending, 1, 0) == 0)
       continue;
 
     if (h->async_cb == NULL)
       continue;
-
+    // 执行上层回调
     h->async_cb(h);
   }
 }

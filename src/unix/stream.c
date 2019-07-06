@@ -1597,7 +1597,7 @@ int uv_read_start(uv_stream_t* stream,
 
   stream->read_cb = read_cb;
   stream->alloc_cb = alloc_cb;
-
+  // 注册读事件
   uv__io_start(stream->loop, &stream->io_watcher, POLLIN);
   uv__handle_start(stream);
   uv__stream_osx_interrupt_select(stream);

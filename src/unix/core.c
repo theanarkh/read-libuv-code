@@ -316,10 +316,9 @@ int uv_backend_fd(const uv_loop_t* loop) {
 
 
 int uv_backend_timeout(const uv_loop_t* loop) {
-  // 即使设置了stop_flag=1也继续阻塞式poll io
+  // 下面几种情况下返回0，即不阻塞在epoll_wait 
   if (loop->stop_flag != 0)
     return 0;
-  // 没有活跃的handles和req则阻塞式poll io
   if (!uv__has_active_handles(loop) && !uv__has_active_reqs(loop))
     return 0;
   // 
@@ -331,7 +330,7 @@ int uv_backend_timeout(const uv_loop_t* loop) {
 
   if (loop->closing_handles)
     return 0;
-
+  // 返回下一个最早过期的时间
   return uv__next_timeout(loop);
 }
 
