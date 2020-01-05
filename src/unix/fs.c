@@ -120,7 +120,8 @@
   while (0)
 
 #define POST                                                                  \
-  do {                                                                        \
+  do {            
+    /* 异步*/                                                            \
     if (cb != NULL) {                                                         \
       uv__req_register(loop, req);                                            \
       uv__work_submit(loop,                                                   \
@@ -130,7 +131,8 @@
                       uv__fs_done);                                           \
       return 0;                                                               \
     }                                                                         \
-    else {                                                                    \
+    else {   
+      /* 同步 */                                                              \
       uv__fs_work(&req->work_req);                                            \
       return req->result;                                                     \
     }                                                                         \

@@ -256,6 +256,7 @@ void uv__io_poll(uv_loop_t* loop, int timeout) {
   psigset = NULL;
   if (loop->flags & UV_LOOP_BLOCK_SIGPROF) {
     sigemptyset(&sigset);
+    // 如果调setitimer(ITIMER_PROF,...)设置了定时触发SIGPROF信号，则到期后，并且每隔一段时间后会触发SIGPROF信号
     sigaddset(&sigset, SIGPROF);
     psigset = &sigset;
   }
@@ -271,7 +272,13 @@ void uv__io_poll(uv_loop_t* loop, int timeout) {
      */
     if (sizeof(int32_t) == sizeof(long) && timeout >= max_safe_timeout)
       timeout = max_safe_timeout;
-
+    /*
+      http://man7.org/linux/man-pages/man2/epoll_wait.2.html
+      pthread_sigmask(SIG_SETMASK, &sigmask, &origmask);
+      ready = epoll_wait(epfd, &events, maxevents, timeout);
+      pthread_sigmask(SIG_SETMASK, &origmask, NULL);
+      即屏蔽SIGPROF信号，避免SIGPROF信号唤醒epoll_wait，但是却没有就绪的事件
+    */
     nfds = epoll_pwait(loop->backend_fd,
                        events,
                        ARRAY_SIZE(events),

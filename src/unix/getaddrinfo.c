@@ -190,7 +190,7 @@ int uv_getaddrinfo(uv_loop_t* loop,
   // 传了cb是异步
   if (cb) {
     uv__work_submit(loop,
-                    &req->wor k_req,
+                    &req->work_req,
                     UV__WORK_SLOW_IO,
                     uv__getaddrinfo_work,
                     uv__getaddrinfo_done);

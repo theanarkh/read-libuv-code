@@ -40,13 +40,14 @@ static int uv__async_eventfd(void);
 
 int uv_async_init(uv_loop_t* loop, uv_async_t* handle, uv_async_cb async_cb) {
   int err;
-
+  // 给libuv注册一个观察者io，读端
   err = uv__async_start(loop);
   if (err)
     return err;
-
+  // 设置相关字段，给libuv插入一个async_handle，写端
   uv__handle_init(loop, (uv_handle_t*)handle, UV_ASYNC);
   handle->async_cb = async_cb;
+  // 标记是否有任务完成了
   handle->pending = 0;
 
   QUEUE_INSERT_TAIL(&loop->async_handles, &handle->queue);
@@ -190,10 +191,13 @@ static int uv__async_start(uv_loop_t* loop) {
       int fd;
 
       snprintf(buf, sizeof(buf), "/proc/self/fd/%d", pipefd[0]);
+      // 通过fd就可以实现对管道的读写
       fd = uv__open_cloexec(buf, O_RDWR);
       if (fd >= 0) {
+        // 关掉旧的
         uv__close(pipefd[0]);
         uv__close(pipefd[1]);
+        // 赋值新的
         pipefd[0] = fd;
         pipefd[1] = fd;
       }
