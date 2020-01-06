@@ -862,7 +862,7 @@ void uv__io_start(uv_loop_t* loop, uv__io_t* w, unsigned int events) {
   assert(0 != events);
   assert(w->fd >= 0);
   assert(w->fd < INT_MAX);
-
+  // 记录当前的events，用于下次比较
   w->pevents |= events;
   maybe_resize(loop, w->fd + 1);
 
@@ -871,10 +871,11 @@ void uv__io_start(uv_loop_t* loop, uv__io_t* w, unsigned int events) {
    * every tick of the event loop but the other backends allow us to
    * short-circuit here if the event mask is unchanged.
    */
+  // event没变，则不需要再次处理
   if (w->events == w->pevents)
     return;
 #endif
-  // 如果队列为空则把w挂载到watcher_queue的watch_queue
+  // 如果队列为空则把w挂载到watcher_queue队列中
   if (QUEUE_EMPTY(&w->watcher_queue))
     QUEUE_INSERT_TAIL(&loop->watcher_queue, &w->watcher_queue);
   // 保存映射关系

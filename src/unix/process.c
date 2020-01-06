@@ -118,27 +118,28 @@ int uv__make_socketpair(int fds[2], int flags) {
 
   if (no_cloexec)
     goto skip;
-
+  // 测试是否支持SOCK_CLOEXEC标记，设置close-on-exec，在fork+exec的时候关闭，避免被子进程继承
   if (socketpair(AF_UNIX, SOCK_STREAM | UV__SOCK_CLOEXEC | flags, 0, fds) == 0)
     return 0;
 
   /* Retry on EINVAL, it means SOCK_CLOEXEC is not supported.
    * Anything else is a genuine error.
    */
+  // 返回的错误不是不支持，则说明是一般错误，直接返回，否则可以往下走，分两步设置close-on-exec，不过可能会引起竞争条件
   if (errno != EINVAL)
     return UV__ERR(errno);
-
+  // 打标记，下次不用执行上面的代码了
   no_cloexec = 1;
 
 skip:
 #endif
-
+  // unix域通信，返回两个通信的文件描述符
   if (socketpair(AF_UNIX, SOCK_STREAM, 0, fds))
     return UV__ERR(errno);
-
+  // 设置close-on-exec标记
   uv__cloexec(fds[0], 1);
   uv__cloexec(fds[1], 1);
-
+  // 设置非阻塞
   if (flags & UV__F_NONBLOCK) {
     uv__nonblock(fds[0], 1);
     uv__nonblock(fds[1], 1);
@@ -147,7 +148,7 @@ skip:
   return 0;
 }
 
-
+// 同上，获取两个通信的匿名管道
 int uv__make_pipe(int fds[2], int flags) {
 #if defined(__linux__)
   static int no_pipe2;
@@ -432,7 +433,7 @@ int uv_spawn(uv_loop_t* loop,
                               UV_PROCESS_SETUID |
                               UV_PROCESS_WINDOWS_HIDE |
                               UV_PROCESS_WINDOWS_VERBATIM_ARGUMENTS)));
-
+  // 初始化handle
   uv__handle_init(loop, (uv_handle_t*)process, UV_PROCESS);
   QUEUE_INIT(&process->queue);
 
@@ -479,10 +480,16 @@ int uv_spawn(uv_loop_t* loop,
    * marked close-on-exec. Then, after the call to `fork()`,
    * the parent polls the read end until it EOFs or errors with EPIPE.
    */
+  /*
+    申请一个管道，根据上面的注释，需要设置close-on-exec标记，
+    主进程一直读管道，直到子进程执行了exec，这时候管道会被关闭，导致主进程
+    返回EPIPE，这时候主进程就知道子进程执行了exec了，避免子进程在exec前后，主进程
+    给子进程发送了东西，不知道是想给exec前的进程还是之后的进程发的
+  */
   err = uv__make_pipe(signal_pipe, 0);
   if (err)
     goto error;
-
+  // 设置主进程（libuv）对子进程退出这个信号感兴趣，并设置了回调，主进程在收到这个信号的时候，会在信号处理函数里执行uv_chld
   uv_signal_start(&loop->child_watcher, uv__chld, SIGCHLD);
 
   /* Acquire write lock to prevent opening new fds in worker threads */
@@ -492,11 +499,12 @@ int uv_spawn(uv_loop_t* loop,
   if (pid == -1) {
     err = UV__ERR(errno);
     uv_rwlock_wrunlock(&loop->cloexec_lock);
+    // 释放管道，否则占用主进程的fd，造成fd泄漏
     uv__close(signal_pipe[0]);
     uv__close(signal_pipe[1]);
     goto error;
   }
-
+  // 子进程
   if (pid == 0) {
     uv__process_child_init(options, stdio_count, pipes, signal_pipe[1]);
     abort();
@@ -504,12 +512,15 @@ int uv_spawn(uv_loop_t* loop,
 
   /* Release lock in parent process */
   uv_rwlock_wrunlock(&loop->cloexec_lock);
+  // 关闭写端
   uv__close(signal_pipe[1]);
-
+  // 初始化进程退出状态码
   process->status = 0;
   exec_errorno = 0;
+  // 一直读管道，直到子进程执行了exec
   do
     r = read(signal_pipe[0], &exec_errorno, sizeof(exec_errorno));
+  // EINTR代表被信号中断了系统调用
   while (r == -1 && errno == EINTR);
 
   if (r == 0)
@@ -526,7 +537,7 @@ int uv_spawn(uv_loop_t* loop,
     assert(err == pid);
   } else
     abort();
-
+  // 关闭读管道
   uv__close_nocheckstdio(signal_pipe[0]);
 
   for (i = 0; i < options->stdio_count; i++) {
@@ -541,12 +552,14 @@ int uv_spawn(uv_loop_t* loop,
   }
 
   /* Only activate this handle if exec() happened successfully */
+  // 插入子进程队列
   if (exec_errorno == 0) {
     QUEUE_INSERT_TAIL(&loop->process_handles, &process->queue);
     uv__handle_start(process);
   }
-
+  // 进程id
   process->pid = pid;
+  // 退出时回调
   process->exit_cb = options->exit_cb;
 
   if (pipes != pipes_storage)
@@ -574,7 +587,7 @@ error:
 #endif
 }
 
-
+// 给进程发信号，对操作系统调用的封装
 int uv_process_kill(uv_process_t* process, int signum) {
   return uv_kill(process->pid, signum);
 }
@@ -587,10 +600,12 @@ int uv_kill(int pid, int signum) {
     return 0;
 }
 
-
+// 关闭
 void uv__process_close(uv_process_t* handle) {
+  // 脱离子进程队列
   QUEUE_REMOVE(&handle->queue);
   uv__handle_stop(handle);
+  // 入股没有子进程了，清除信号处理事件
   if (QUEUE_EMPTY(&handle->loop->process_handles))
     uv_signal_stop(&handle->loop->child_watcher);
 }
