@@ -394,7 +394,7 @@ failed_malloc:
 }
 #endif /* defined(__APPLE__) */
 
-
+// 
 int uv__stream_open(uv_stream_t* stream, int fd, int flags) {
 #if defined(__APPLE__)
   int enable;
@@ -407,10 +407,12 @@ int uv__stream_open(uv_stream_t* stream, int fd, int flags) {
   stream->flags |= flags;
 
   if (stream->type == UV_TCP) {
+    // 关闭nagle算法
     if ((stream->flags & UV_HANDLE_TCP_NODELAY) && uv__tcp_nodelay(fd, 1))
       return UV__ERR(errno);
 
     /* TODO Use delay the user passed in. */
+    // 开启SO_KEEPALIVE，使用tcp长连接，一定时间后没有收到数据包会发送心跳包
     if ((stream->flags & UV_HANDLE_TCP_KEEPALIVE) &&
         uv__tcp_keepalive(fd, 1, 60)) {
       return UV__ERR(errno);
@@ -431,7 +433,7 @@ int uv__stream_open(uv_stream_t* stream, int fd, int flags) {
   return 0;
 }
 
-
+// 清空待写队列
 void uv__stream_flush_write_queue(uv_stream_t* stream, int error) {
   uv_write_t* req;
   QUEUE* q;
@@ -446,17 +448,17 @@ void uv__stream_flush_write_queue(uv_stream_t* stream, int error) {
   }
 }
 
-
+// 关闭流
 void uv__stream_destroy(uv_stream_t* stream) {
   assert(!uv__io_active(&stream->io_watcher, POLLIN | POLLOUT));
   assert(stream->flags & UV_HANDLE_CLOSED);
-
+  // 触发上层回调
   if (stream->connect_req) {
     uv__req_unregister(stream->loop, stream->connect_req);
     stream->connect_req->cb(stream->connect_req, UV_ECANCELED);
     stream->connect_req = NULL;
   }
-
+  // 清空待写队列
   uv__stream_flush_write_queue(stream, UV_ECANCELED);
   uv__write_callbacks(stream);
 
@@ -467,6 +469,7 @@ void uv__stream_destroy(uv_stream_t* stream) {
      * callee that the handle has been destroyed.
      */
     uv__req_unregister(stream->loop, stream->shutdown_req);
+    // 调用上传回调
     stream->shutdown_req->cb(stream->shutdown_req, UV_ECANCELED);
     stream->shutdown_req = NULL;
   }
@@ -538,7 +541,7 @@ void uv__server_io(uv_loop_t* loop, uv__io_t* w, unsigned int events) {
     if (w->rcount <= 0)
       return;
 #endif /* defined(UV_HAVE_KQUEUE) */
-
+    // 有连接到来，进行accept
     err = uv__accept(uv__stream_fd(stream));
     if (err < 0) {
       if (err == UV_EAGAIN || err == UV__ERR(EWOULDBLOCK))
@@ -560,6 +563,7 @@ void uv__server_io(uv_loop_t* loop, uv__io_t* w, unsigned int events) {
     UV_DEC_BACKLOG(w)
     // 保存连接对应的socket
     stream->accepted_fd = err;
+    // 执行上传回调
     stream->connection_cb(stream, 0);
 
     if (stream->accepted_fd != -1) {

@@ -70,7 +70,7 @@ static void uv__signal_global_init(void) {
      * it the handler functions will be called multiple times. Thus
      * we only want to do it once.
      */
-    // 注册fork之后，在父线程里执行的函数，保证父子线程的数据独立
+    // 注册fork之后，在父进程里执行的函数，保证父子进程的数据独立
     if (pthread_atfork(NULL, NULL, &uv__signal_global_reinit))
       abort();
 
@@ -99,8 +99,9 @@ UV_DESTRUCTOR(static void uv__signal_global_fini(void)) {
 
 
 static void uv__signal_global_reinit(void) {
+  // 清除原来的（如果有的话）
   uv__signal_global_fini();
-
+  // 新建一个管道用于互斥控制
   if (uv__make_pipe(uv__signal_lock_pipefd, 0))
     abort();
   // 先往管道写入数据，即解锁。后续才能顺利lock，unlock配对使用

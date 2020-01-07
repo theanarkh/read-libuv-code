@@ -27,7 +27,11 @@
 #include <assert.h>
 #include <errno.h>
 
-
+/*
+1 获取一个新的socket fd
+2 把fd保存到handle里，并根据flag进行相关设置
+3 绑定到本机随意的地址（如果设置了该标记的话）
+*/
 static int new_socket(uv_tcp_t* handle, int domain, unsigned long flags) {
   struct sockaddr_storage saddr;
   socklen_t slen;
@@ -44,16 +48,17 @@ static int new_socket(uv_tcp_t* handle, int domain, unsigned long flags) {
     uv__close(sockfd);
     return err;
   }
-
+  // 绑定本机随意的地址
   if (flags & UV_HANDLE_BOUND) {
     /* Bind this new socket to an arbitrary port */
     slen = sizeof(saddr);
     memset(&saddr, 0, sizeof(saddr));
+    // 获取fd对应的socket信息，如果没有则随便获取本机的地址
     if (getsockname(uv__stream_fd(handle), (struct sockaddr*) &saddr, &slen)) {
       uv__close(sockfd);
       return UV__ERR(errno);
     }
-
+    // 绑定到socket中
     if (bind(uv__stream_fd(handle), (struct sockaddr*) &saddr, slen)) {
       uv__close(sockfd);
       return UV__ERR(errno);
@@ -63,7 +68,7 @@ static int new_socket(uv_tcp_t* handle, int domain, unsigned long flags) {
   return 0;
 }
 
-
+// 对new_socket的封装，并处理了new_socket后面一段代码报错导致遗留的问题
 static int maybe_new_socket(uv_tcp_t* handle, int domain, unsigned long flags) {
   struct sockaddr_storage saddr;
   socklen_t slen;
@@ -72,23 +77,23 @@ static int maybe_new_socket(uv_tcp_t* handle, int domain, unsigned long flags) {
     handle->flags |= flags;
     return 0;
   }
-
+  // 已经有socket fd了
   if (uv__stream_fd(handle) != -1) {
 
     if (flags & UV_HANDLE_BOUND) {
-
+      // handle的flag是在new_socket里设置的，如果有这个标记说明已经执行过下面的操作了
       if (handle->flags & UV_HANDLE_BOUND) {
         /* It is already bound to a port. */
         handle->flags |= flags;
         return 0;
       }
-      
+      // 有socket fd，并设置了自动绑定，并且还没有绑定过socket地址（可能是new_socket里后面一段代码报错了）
       /* Query to see if tcp socket is bound. */
       slen = sizeof(saddr);
       memset(&saddr, 0, sizeof(saddr));
       if (getsockname(uv__stream_fd(handle), (struct sockaddr*) &saddr, &slen))
         return UV__ERR(errno);
-
+      // 绑定过了socket地址，则更新flags就行
       if ((saddr.ss_family == AF_INET6 &&
           ((struct sockaddr_in6*) &saddr)->sin6_port != 0) ||
           (saddr.ss_family == AF_INET &&
@@ -97,7 +102,7 @@ static int maybe_new_socket(uv_tcp_t* handle, int domain, unsigned long flags) {
         handle->flags |= flags;
         return 0;
       }
-
+      // 没绑定则绑定到getsockname返回的随机地址
       /* Bind to arbitrary port */
       if (bind(uv__stream_fd(handle), (struct sockaddr*) &saddr, slen))
         return UV__ERR(errno);
@@ -158,12 +163,13 @@ int uv__tcp_bind(uv_tcp_t* tcp,
   /* Cannot set IPv6-only mode on non-IPv6 socket. */
   if ((flags & UV_TCP_IPV6ONLY) && addr->sa_family != AF_INET6)
     return UV_EINVAL;
-
+  // 如果直接调bind，可能还没有对应的socket fd，第三个参数传0，则不会执行bind等操作
   err = maybe_new_socket(tcp, addr->sa_family, 0);
   if (err)
     return err;
 
   on = 1;
+  // 设置端口复用，在tcp连接2msl的时候里支持复用端口 
   if (setsockopt(tcp->io_watcher.fd, SOL_SOCKET, SO_REUSEADDR, &on, sizeof(on)))
     return UV__ERR(errno);
 
@@ -187,6 +193,7 @@ int uv__tcp_bind(uv_tcp_t* tcp,
 #endif
 
   errno = 0;
+  // 在这里进行bind
   if (bind(tcp->io_watcher.fd, addr, addrlen) && errno != EADDRINUSE) {
     if (errno == EAFNOSUPPORT)
       /* OSX, other BSDs and SunoS fail with EAFNOSUPPORT when binding a
@@ -194,8 +201,9 @@ int uv__tcp_bind(uv_tcp_t* tcp,
       return UV_EINVAL;
     return UV__ERR(errno);
   }
+  // 记录错误码，成功或者EADDRINUSE
   tcp->delayed_error = UV__ERR(errno);
-
+  
   tcp->flags |= UV_HANDLE_BOUND;
   if (addr->sa_family == AF_INET6)
     tcp->flags |= UV_HANDLE_IPV6;
@@ -247,15 +255,15 @@ int uv__tcp_connect(uv_connect_t* req,
     else
       return UV__ERR(errno);
   }
-
+  // 初始化一个request，并设置某些字段
   uv__req_init(handle->loop, req, UV_CONNECT);
   req->cb = cb;
   req->handle = (uv_stream_t*) handle;
   QUEUE_INIT(&req->queue);
   handle->connect_req = req;
-
+  // 注册到libuv观察者队列，handle->io_watcher已经保存了fd，不需要uv__io_init了
   uv__io_start(handle->loop, &handle->io_watcher, POLLOUT);
-
+  // 连接出错，插入pending队尾
   if (handle->delayed_error)
     uv__io_feed(handle->loop, &handle->io_watcher);
 
@@ -292,7 +300,7 @@ int uv_tcp_getsockname(const uv_tcp_t* handle,
 
   /* sizeof(socklen_t) != sizeof(int) on some systems. */
   socklen = (socklen_t) *namelen;
-
+  // 获取fd对应的socket信息
   if (getsockname(uv__stream_fd(handle), name, &socklen))
     return UV__ERR(errno);
 
@@ -300,7 +308,7 @@ int uv_tcp_getsockname(const uv_tcp_t* handle,
   return 0;
 }
 
-
+// 获取socket对端的地址
 int uv_tcp_getpeername(const uv_tcp_t* handle,
                        struct sockaddr* name,
                        int* namelen) {
@@ -347,33 +355,34 @@ int uv_tcp_listen(uv_tcp_t* tcp, int backlog, uv_connection_cb cb) {
   */
   flags |= UV_HANDLE_BOUND;
 #endif
+  // 可能还没有用于listen的fd，socket地址等，
   err = maybe_new_socket(tcp, AF_INET, flags);
   if (err)
     return err;
 
   if (listen(tcp->io_watcher.fd, backlog))
     return UV__ERR(errno);
-
+  // 建立连接后的业务回调
   tcp->connection_cb = cb;
   tcp->flags |= UV_HANDLE_BOUND;
 
   /* Start listening for connections. */
   // 有连接到来时的libuv层回调
   tcp->io_watcher.cb = uv__server_io;
-  // 注册事件
+  // 注册读事件，等待连接到来
   uv__io_start(tcp->loop, &tcp->io_watcher, POLLIN);
 
   return 0;
 }
 
-
+// 开启/关闭nagle算法
 int uv__tcp_nodelay(int fd, int on) {
   if (setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &on, sizeof(on)))
     return UV__ERR(errno);
   return 0;
 }
 
-
+// 开启/关闭长连接
 int uv__tcp_keepalive(int fd, int on, unsigned int delay) {
   if (setsockopt(fd, SOL_SOCKET, SO_KEEPALIVE, &on, sizeof(on)))
     return UV__ERR(errno);
@@ -395,7 +404,7 @@ int uv__tcp_keepalive(int fd, int on, unsigned int delay) {
   return 0;
 }
 
-
+// 还没有对应的fd，则先打标记，有则直接设置
 int uv_tcp_nodelay(uv_tcp_t* handle, int on) {
   int err;
 
@@ -413,7 +422,7 @@ int uv_tcp_nodelay(uv_tcp_t* handle, int on) {
   return 0;
 }
 
-
+// 同上
 int uv_tcp_keepalive(uv_tcp_t* handle, int on, unsigned int delay) {
   int err;
 
