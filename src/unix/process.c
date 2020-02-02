@@ -283,7 +283,7 @@ static void uv__process_child_init(const uv_process_options_t* options,
   int err;
   int fd;
   int n;
-
+  // 脱离会话，自己成为一个新会话的leader进程
   if (options->flags & UV_PROCESS_DETACHED)
     setsid();
 

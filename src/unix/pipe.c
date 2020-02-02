@@ -39,7 +39,7 @@ int uv_pipe_init(uv_loop_t* loop, uv_pipe_t* handle, int ipc) {
   return 0;
 }
 
-
+// name是unix域的文件路径
 int uv_pipe_bind(uv_pipe_t* handle, const char* name) {
   struct sockaddr_un saddr;
   const char* pipe_fname;
@@ -59,7 +59,7 @@ int uv_pipe_bind(uv_pipe_t* handle, const char* name) {
 
   /* We've got a copy, don't touch the original any more. */
   name = NULL;
-
+  // unix域套接字
   err = uv__socket(AF_UNIX, SOCK_STREAM, 0);
   if (err < 0)
     goto err_socket;
@@ -81,8 +81,10 @@ int uv_pipe_bind(uv_pipe_t* handle, const char* name) {
   }
 
   /* Success. */
+  // 已经绑定
   handle->flags |= UV_HANDLE_BOUND;
   handle->pipe_fname = pipe_fname; /* Is a strdup'ed copy. */
+  // 保存socket fd，用于后面监听
   handle->io_watcher.fd = sockfd;
   return 0;
 
@@ -106,9 +108,11 @@ int uv_pipe_listen(uv_pipe_t* handle, int backlog, uv_connection_cb cb) {
 
   if (listen(uv__stream_fd(handle), backlog))
     return UV__ERR(errno);
-
+  // 保存回调，有完成三次握手的连接时触发
   handle->connection_cb = cb;
+  // 有完成三次握手的连接时触发（io观察者的fd在init函数里设置了）
   handle->io_watcher.cb = uv__server_io;
+  // 注册io观察者到libuv，等待连接，即读事件到来
   uv__io_start(handle->loop, &handle->io_watcher, POLLIN);
   return 0;
 }
@@ -177,7 +181,7 @@ void uv_pipe_connect(uv_connect_t* req,
   int r;
 
   new_sock = (uv__stream_fd(handle) == -1);
-
+  // 客户端还没有对应的socket fd
   if (new_sock) {
     err = uv__socket(AF_UNIX, SOCK_STREAM, 0);
     if (err < 0)
@@ -189,7 +193,7 @@ void uv_pipe_connect(uv_connect_t* req,
   strncpy(saddr.sun_path, name, sizeof(saddr.sun_path) - 1);
   saddr.sun_path[sizeof(saddr.sun_path) - 1] = '\0';
   saddr.sun_family = AF_UNIX;
-
+  // 连接服务器，unix域路径是name
   do {
     r = connect(uv__stream_fd(handle),
                 (struct sockaddr*)&saddr, sizeof saddr);
