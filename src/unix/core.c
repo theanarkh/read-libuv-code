@@ -405,7 +405,7 @@ int uv_run(uv_loop_t* loop, uv_run_mode mode) {
   return r;
 }
 
-
+// 更新当前时间，通过uv_now获取当前时间时，需要先调该函数，否则获取的值是某次事件循环开始的事件，可能不对
 void uv_update_time(uv_loop_t* loop) {
   uv__update_time(loop);
 }
@@ -415,7 +415,7 @@ int uv_is_active(const uv_handle_t* handle) {
   return uv__is_active(handle);
 }
 
-
+// 获取一个socket
 /* Open a socket in non-blocking close-on-exec mode, atomically if possible. */
 int uv__socket(int domain, int type, int protocol) {
   int sockfd;
@@ -433,8 +433,9 @@ int uv__socket(int domain, int type, int protocol) {
   sockfd = socket(domain, type, protocol);
   if (sockfd == -1)
     return UV__ERR(errno);
-
+  // 所有网络io都是非阻塞的
   err = uv__nonblock(sockfd, 1);
+  // 设置close-on-exec，防止fork exec的时候文件描述符泄漏
   if (err == 0)
     err = uv__cloexec(sockfd, 1);
 
@@ -442,7 +443,7 @@ int uv__socket(int domain, int type, int protocol) {
     uv__close(sockfd);
     return err;
   }
-
+// 屏蔽SIGPIPE信号，否则连接对端关闭的时候，再写会导致进程崩溃
 #if defined(SO_NOSIGPIPE)
   {
     int on = 1;
@@ -453,6 +454,7 @@ int uv__socket(int domain, int type, int protocol) {
   return sockfd;
 }
 
+// 打开一个文件，返回FILE指针
 /* get a file pointer to a file in read-only and close-on-exec mode */
 FILE* uv__open_file(const char* path) {
   int fd;
@@ -469,7 +471,7 @@ FILE* uv__open_file(const char* path) {
    return fp;
 }
 
-
+// 获得一个连接fd，并设置非阻塞和close-on-exec标记
 int uv__accept(int sockfd) {
   int peerfd;
   int err;
@@ -504,6 +506,7 @@ skip:
 
     peerfd = accept(sockfd, NULL, NULL);
     if (peerfd == -1) {
+      // 被信号唤醒的，重试
       if (errno == EINTR)
         continue;
       return UV__ERR(errno);
@@ -522,17 +525,18 @@ skip:
   }
 }
 
-
+// 关闭文件描述符
 int uv__close_nocheckstdio(int fd) {
   int saved_errno;
   int rc;
 
   assert(fd > -1);  /* Catch uninitialized io_watcher.fd bugs. */
-
+  // 先保存上一个系统调用的错误码，否则close报错的时候errno被覆盖了，但是close报错可能是正确的逻辑，不需要修改errno
   saved_errno = errno;
   rc = close(fd);
   if (rc == -1) {
     rc = UV__ERR(errno);
+    // 被信号唤醒或者正在处理，不算错误，恢复错误码errno,close不是慢调用，不会出现EINTR
     if (rc == UV_EINTR || rc == UV__ERR(EINPROGRESS))
       rc = 0;    /* The close is in progress, not an error. */
     errno = saved_errno;
@@ -550,12 +554,13 @@ int uv__close(int fd) {
   return uv__close_nocheckstdio(fd);
 }
 
-
+// 设置底层设备文件的阻塞模式
 int uv__nonblock_ioctl(int fd, int set) {
   int r;
 
   do
     r = ioctl(fd, FIONBIO, &set);
+  // 被信号唤醒,重试 
   while (r == -1 && errno == EINTR);
 
   if (r)
@@ -564,7 +569,7 @@ int uv__nonblock_ioctl(int fd, int set) {
   return 0;
 }
 
-
+// 设置close-on-exec标记
 #if !defined(__CYGWIN__) && !defined(__MSYS__)
 int uv__cloexec_ioctl(int fd, int set) {
   int r;
@@ -580,7 +585,7 @@ int uv__cloexec_ioctl(int fd, int set) {
 }
 #endif
 
-
+// 设置一般文件的阻塞模式
 int uv__nonblock_fcntl(int fd, int set) {
   int flags;
   int r;
@@ -593,14 +598,15 @@ int uv__nonblock_fcntl(int fd, int set) {
     return UV__ERR(errno);
 
   /* Bail out now if already set/clear. */
+  // 值没变
   if (!!(r & O_NONBLOCK) == !!set)
     return 0;
-
+  // 设置或清除
   if (set)
     flags = r | O_NONBLOCK;
   else
     flags = r & ~O_NONBLOCK;
-
+  // 设置
   do
     r = fcntl(fd, F_SETFL, flags);
   while (r == -1 && errno == EINTR);
@@ -646,6 +652,7 @@ int uv__cloexec_fcntl(int fd, int set) {
 /* This function is not execve-safe, there is a race window
  * between the call to dup() and fcntl(FD_CLOEXEC).
  */
+// 复制fd，得到一个新的fd
 int uv__dup(int fd) {
   int err;
 
@@ -670,13 +677,17 @@ ssize_t uv__recvmsg(int fd, struct msghdr* msg, int flags) {
   int* pfd;
   int* end;
 #if defined(__linux__)
+  // 标记是否支持非阻塞标记
   static int no_msg_cmsg_cloexec;
   if (no_msg_cmsg_cloexec == 0) {
+    // flags并且非阻塞模式接收
     rc = recvmsg(fd, msg, flags | 0x40000000);  /* MSG_CMSG_CLOEXEC */
     if (rc != -1)
       return rc;
+    // 不等于EINVAL说明是逻辑出错，否则可能是flags或非阻塞的flags出错
     if (errno != EINVAL)
       return UV__ERR(errno);
+    // 重试，看是不是不支持设置的非阻塞flags
     rc = recvmsg(fd, msg, flags);
     if (rc == -1)
       return UV__ERR(errno);
@@ -691,7 +702,11 @@ ssize_t uv__recvmsg(int fd, struct msghdr* msg, int flags) {
     return UV__ERR(errno);
   if (msg->msg_controllen == 0)
     return rc;
+  /*
+    msg里有一个字段，指向多个数据块，每个数据块内容是cmsg结构体+数据
+  */ 
   for (cmsg = CMSG_FIRSTHDR(msg); cmsg != NULL; cmsg = CMSG_NXTHDR(msg, cmsg))
+    // 数据是文件描述符
     if (cmsg->cmsg_type == SCM_RIGHTS)
       for (pfd = (int*) CMSG_DATA(cmsg),
            end = (int*) ((char*) cmsg + cmsg->cmsg_len);
@@ -701,7 +716,7 @@ ssize_t uv__recvmsg(int fd, struct msghdr* msg, int flags) {
   return rc;
 }
 
-
+// 获取当前工作目录
 int uv_cwd(char* buffer, size_t* size) {
   if (buffer == NULL || size == NULL)
     return UV_EINVAL;
@@ -718,7 +733,7 @@ int uv_cwd(char* buffer, size_t* size) {
   return 0;
 }
 
-
+// 修改工作目录
 int uv_chdir(const char* dir) {
   if (chdir(dir))
     return UV__ERR(errno);
@@ -738,7 +753,7 @@ void uv_disable_stdio_inheritance(void) {
       break;
 }
 
-
+// 获取handle里的文件描述符
 int uv_fileno(const uv_handle_t* handle, uv_os_fd_t* fd) {
   int fd_out;
 
@@ -794,7 +809,7 @@ static int uv__run_pending(uv_loop_t* loop) {
   return 1;
 }
 
-
+// val最接近的2的n次方的数，比如val=5，则返回2的三次方8
 static unsigned int next_power_of_two(unsigned int val) {
   val -= 1;
   val |= val >> 1;
@@ -812,7 +827,7 @@ static void maybe_resize(uv_loop_t* loop, unsigned int len) {
   void* fake_watcher_count;
   unsigned int nwatchers;
   unsigned int i;
-
+  // 长度可以满足
   if (len <= loop->nwatchers)
     return;
 
@@ -826,11 +841,13 @@ static void maybe_resize(uv_loop_t* loop, unsigned int len) {
   }
 
   nwatchers = next_power_of_two(len + 2) - 2;
+  // 在原来的内存后，申请新的内存
   watchers = uv__realloc(loop->watchers,
                          (nwatchers + 2) * sizeof(loop->watchers[0]));
 
   if (watchers == NULL)
     abort();
+  // 重置
   for (i = loop->nwatchers; i < nwatchers; i++)
     watchers[i] = NULL;
   watchers[nwatchers] = fake_watcher_list;
@@ -924,20 +941,22 @@ void uv__io_stop(uv_loop_t* loop, uv__io_t* w, unsigned int events) {
 
 
 void uv__io_close(uv_loop_t* loop, uv__io_t* w) {
+  // 从io观察者队列中移出w
   uv__io_stop(loop, w, POLLIN | POLLOUT | UV__POLLRDHUP | UV__POLLPRI);
+  // 移出pending队列
   QUEUE_REMOVE(&w->pending_queue);
 
   /* Remove stale events for this file descriptor */
   uv__platform_invalidate_fd(loop, w->fd);
 }
 
-
+// 插入pending队列
 void uv__io_feed(uv_loop_t* loop, uv__io_t* w) {
   if (QUEUE_EMPTY(&w->pending_queue))
     QUEUE_INSERT_TAIL(&loop->pending_queue, &w->pending_queue);
 }
 
-
+// io观察者是否注册了events事件，pevent是当前注册的事件 
 int uv__io_active(const uv__io_t* w, unsigned int events) {
   assert(0 == (events & ~(POLLIN | POLLOUT | UV__POLLRDHUP | UV__POLLPRI)));
   assert(0 != events);
@@ -949,7 +968,7 @@ int uv__fd_exists(uv_loop_t* loop, int fd) {
   return (unsigned) fd < loop->nwatchers && loop->watchers[fd] != NULL;
 }
 
-
+// 获取进程的资源使用情况
 int uv_getrusage(uv_rusage_t* rusage) {
   struct rusage usage;
 
@@ -982,7 +1001,7 @@ int uv_getrusage(uv_rusage_t* rusage) {
   return 0;
 }
 
-
+// 打开文件，设置close-on-exec标记
 int uv__open_cloexec(const char* path, int flags) {
   int err;
   int fd;
@@ -1016,7 +1035,7 @@ int uv__open_cloexec(const char* path, int flags) {
   return fd;
 }
 
-
+// 关闭newfd（如果已经打开的话），然后使得oldfd，newfd都指向oldfd指向的项 
 int uv__dup2_cloexec(int oldfd, int newfd) {
   int r;
 #if (defined(__FreeBSD__) && __FreeBSD__ >= 10) || defined(__NetBSD__)
