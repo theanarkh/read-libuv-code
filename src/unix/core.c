@@ -115,7 +115,7 @@ uint64_t uv_hrtime(void) {
 
 void uv_close(uv_handle_t* handle, uv_close_cb close_cb) {
   assert(!uv__is_closing(handle));
-
+  // 正在关闭，但是还没执行回调等后置操作
   handle->flags |= UV_HANDLE_CLOSING;
   handle->close_cb = close_cb;
 
@@ -192,7 +192,6 @@ int uv__socket_sockopt(uv_handle_t* handle, int optname, int* value) {
 
   if (handle == NULL || value == NULL)
     return UV_EINVAL;
-
   if (handle->type == UV_TCP || handle->type == UV_NAMED_PIPE)
     fd = uv__stream_fd((uv_stream_t*) handle);
   else if (handle->type == UV_UDP)
@@ -212,14 +211,14 @@ int uv__socket_sockopt(uv_handle_t* handle, int optname, int* value) {
 
   return 0;
 }
-
+// 头插法插入closing队列，在closing阶段被执行
 void uv__make_close_pending(uv_handle_t* handle) {
   assert(handle->flags & UV_HANDLE_CLOSING);
   assert(!(handle->flags & UV_HANDLE_CLOSED));
   handle->next_closing = handle->loop->closing_handles;
   handle->loop->closing_handles = handle;
 }
-
+// 使用readv 和 writev时iovec 结构体的最大个数
 int uv__getiovmax(void) {
 #if defined(IOV_MAX)
   return IOV_MAX;
@@ -239,7 +238,7 @@ int uv__getiovmax(void) {
 #endif
 }
 
-
+// 执行closing阶段的回调
 static void uv__finish_close(uv_handle_t* handle) {
   /* Note: while the handle is in the UV_HANDLE_CLOSING state now, it's still
    * possible for it to be active in the sense that uv__is_active() returns
@@ -289,7 +288,7 @@ static void uv__finish_close(uv_handle_t* handle) {
   }
 }
 
-
+// 执行closing阶段的的回调
 static void uv__run_closing_handles(uv_loop_t* loop) {
   uv_handle_t* p;
   uv_handle_t* q;
@@ -309,12 +308,12 @@ int uv_is_closing(const uv_handle_t* handle) {
   return uv__is_closing(handle);
 }
 
-
+// epoll用的fd
 int uv_backend_fd(const uv_loop_t* loop) {
   return loop->backend_fd;
 }
 
-
+// 计算epoll使用的timeout
 int uv_backend_timeout(const uv_loop_t* loop) {
   // 下面几种情况下返回0，即不阻塞在epoll_wait 
   if (loop->stop_flag != 0)
@@ -351,11 +350,12 @@ int uv_run(uv_loop_t* loop, uv_run_mode mode) {
   int timeout;
   int r;
   int ran_pending;
-
+  // 在uv_run之前要先提交任务到loop
   r = uv__loop_alive(loop);
+  // 事件循环没有任务执行，即将退出，设置一下当前循环的时间
   if (!r)
     uv__update_time(loop);
-
+  // 没有任务需要处理或者调用了uv_stop 
   while (r != 0 && loop->stop_flag == 0) {
     // 更新loop的time字段
     uv__update_time(loop);
@@ -368,14 +368,14 @@ int uv_run(uv_loop_t* loop, uv_run_mode mode) {
     uv__run_prepare(loop);
 
     timeout = 0;
-    // UV_RUN_ONCE并且有pending节点的时候，会阻塞式poll io，默认模式也是
+    // 执行模式是UV_RUN_ONCE时，如果没有pending节点，才会阻塞式poll io，默认模式也是
     if ((mode == UV_RUN_ONCE && !ran_pending) || mode == UV_RUN_DEFAULT)
       timeout = uv_backend_timeout(loop);
     // poll io timeout是epoll_wait的超时时间
     uv__io_poll(loop, timeout);
     uv__run_check(loop);
     uv__run_closing_handles(loop);
-    // 还有一次执行超时回调的机会
+    // 还有一次执行超时回调的机会，因为poll io阶段可能是因为定时器超时返回的。
     if (mode == UV_RUN_ONCE) {
       /* UV_RUN_ONCE implies forward progress: at least one callback must have
        * been invoked when it returns. uv__io_poll() can return without doing
@@ -390,6 +390,7 @@ int uv_run(uv_loop_t* loop, uv_run_mode mode) {
     }
 
     r = uv__loop_alive(loop);
+    // 只执行一次，退出循环,UV_RUN_NOWAIT表示在poll io阶段不会阻塞并且循环只执行一次
     if (mode == UV_RUN_ONCE || mode == UV_RUN_NOWAIT)
       break;
   }
@@ -397,9 +398,10 @@ int uv_run(uv_loop_t* loop, uv_run_mode mode) {
   /* The if statement lets gcc compile it to a conditional store. Avoids
    * dirtying a cache line.
    */
+  // 是因为调用了uv_stop退出的，重置flag
   if (loop->stop_flag != 0)
     loop->stop_flag = 0;
-
+  // 返回是否还有活跃的任务（handle或request），业务代表可以再次执行uv_run
   return r;
 }
 
@@ -838,7 +840,7 @@ static void maybe_resize(uv_loop_t* loop, unsigned int len) {
   loop->nwatchers = nwatchers;
 }
 
-
+// 初始化io观察者
 void uv__io_init(uv__io_t* w, uv__io_cb cb, int fd) {
   assert(cb != NULL);
   assert(fd >= -1);
@@ -885,7 +887,7 @@ void uv__io_start(uv_loop_t* loop, uv__io_t* w, unsigned int events) {
   }
 }
 
-
+// 修改io观察者感兴趣的事件，如果还有感兴趣的事件的话，io观察者还会在队列里，否则移出
 void uv__io_stop(uv_loop_t* loop, uv__io_t* w, unsigned int events) {
   assert(0 == (events & ~(POLLIN | POLLOUT | UV__POLLRDHUP | UV__POLLPRI)));
   assert(0 != events);
@@ -898,13 +900,15 @@ void uv__io_stop(uv_loop_t* loop, uv__io_t* w, unsigned int events) {
   /* Happens when uv__io_stop() is called on a handle that was never started. */
   if ((unsigned) w->fd >= loop->nwatchers)
     return;
-
+  // 清除之前注册的事件，保存在pevents里，表示当前感兴趣的事件
   w->pevents &= ~events;
-
+  // 对所有事件都不感兴趣了
   if (w->pevents == 0) {
+    // 移出io观察者队列
     QUEUE_REMOVE(&w->watcher_queue);
+    // 重置
     QUEUE_INIT(&w->watcher_queue);
-
+    // 重置
     if (loop->watchers[w->fd] != NULL) {
       assert(loop->watchers[w->fd] == w);
       assert(loop->nfds > 0);
@@ -913,6 +917,7 @@ void uv__io_stop(uv_loop_t* loop, uv__io_t* w, unsigned int events) {
       w->events = 0;
     }
   }
+  // 之前还没有插入io观察者队列，则插入，等到poll io时处理，否则不需要处理
   else if (QUEUE_EMPTY(&w->watcher_queue))
     QUEUE_INSERT_TAIL(&loop->watcher_queue, &w->watcher_queue);
 }
