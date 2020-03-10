@@ -881,7 +881,7 @@ void uv__io_start(uv_loop_t* loop, uv__io_t* w, unsigned int events) {
   assert(0 != events);
   assert(w->fd >= 0);
   assert(w->fd < INT_MAX);
-  // 记录当前的events，用于下次比较
+  //  设置当前感兴趣的事件
   w->pevents |= events;
   maybe_resize(loop, w->fd + 1);
 

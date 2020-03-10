@@ -165,7 +165,7 @@ void uv__platform_invalidate_fd(uv_loop_t* loop, int fd) {
   }
 }
 
-
+// 判断fd是否在epoll监听的fd中
 int uv__io_check_fd(uv_loop_t* loop, int fd) {
   struct epoll_event e;
   int rc;
@@ -229,8 +229,9 @@ void uv__io_poll(uv_loop_t* loop, int timeout) {
     assert(w->fd < (int) loop->nwatchers);
 
     e.events = w->pevents;
+    // 这里使用了fd字段，事件触发后再通过fd从watchs字段里找到对应的io观察者，没有使用ptr指向io观察者的方案
     e.data.fd = w->fd;
-
+    // w->events初始化的时候为0
     if (w->events == 0)
       op = EPOLL_CTL_ADD;
     else
@@ -249,7 +250,7 @@ void uv__io_poll(uv_loop_t* loop, int timeout) {
       if (epoll_ctl(loop->backend_fd, EPOLL_CTL_MOD, w->fd, &e))
         abort();
     }
-
+    // 记录加到epoll时的状态 
     w->events = w->pevents;
   }
 
@@ -289,6 +290,7 @@ void uv__io_poll(uv_loop_t* loop, int timeout) {
      * timeout == 0 (i.e. non-blocking poll) but there is no guarantee that the
      * operating system didn't reschedule our process while in the syscall.
      */
+    // epoll可能阻塞，这里需要更新事件循环的时间
     SAVE_ERRNO(uv__update_time(loop));
 
     if (nfds == 0) {
@@ -321,6 +323,7 @@ void uv__io_poll(uv_loop_t* loop, int timeout) {
     nevents = 0;
 
     assert(loop->watchers != NULL);
+    // maybe_resize申请空间的时候+2了
     loop->watchers[loop->nwatchers] = (void*) events;
     loop->watchers[loop->nwatchers + 1] = (void*) (uintptr_t) nfds;
     for (i = 0; i < nfds; i++) {
@@ -351,6 +354,7 @@ void uv__io_poll(uv_loop_t* loop, int timeout) {
        * the current watcher. Also, filters out events that users has not
        * requested us to watch.
        */
+      // 只留下感兴趣的事件
       pe->events &= w->pevents | POLLERR | POLLHUP;
 
       /* Work around an epoll quirk where it sometimes reports just the
@@ -376,18 +380,20 @@ void uv__io_poll(uv_loop_t* loop, int timeout) {
         /* Run signal watchers last.  This also affects child process watchers
          * because those are implemented in terms of signal watchers.
          */
+        // 是用于信号处理的io观察者的事件触发，标记
         if (w == &loop->signal_io_watcher)
           have_signals = 1;
         else
+          // 一般的io观察者指向回调
           w->cb(loop, w, pe->events);
 
         nevents++;
       }
     }
-
+    // 有信号发生，触发回调
     if (have_signals != 0)
       loop->signal_io_watcher.cb(loop, &loop->signal_io_watcher, POLLIN);
-
+    // 重置
     loop->watchers[loop->nwatchers] = NULL;
     loop->watchers[loop->nwatchers + 1] = NULL;
 

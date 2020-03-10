@@ -394,7 +394,7 @@ failed_malloc:
 }
 #endif /* defined(__APPLE__) */
 
-// 
+// 关闭nagle，开启长连接，保存fd 
 int uv__stream_open(uv_stream_t* stream, int fd, int flags) {
 #if defined(__APPLE__)
   int enable;
@@ -433,7 +433,7 @@ int uv__stream_open(uv_stream_t* stream, int fd, int flags) {
   return 0;
 }
 
-// 清空待写队列
+// 清空待写队列，插入写完成队列
 void uv__stream_flush_write_queue(uv_stream_t* stream, int error) {
   uv_write_t* req;
   QUEUE* q;
@@ -454,7 +454,9 @@ void uv__stream_destroy(uv_stream_t* stream) {
   assert(stream->flags & UV_HANDLE_CLOSED);
   // 触发上层回调
   if (stream->connect_req) {
+    // 销毁一个request
     uv__req_unregister(stream->loop, stream->connect_req);
+    // 
     stream->connect_req->cb(stream->connect_req, UV_ECANCELED);
     stream->connect_req = NULL;
   }
