@@ -1,5 +1,7 @@
 # read-libuv-code
 libuv源码分析
+<br/>
+知乎：https://zhuanlan.zhihu.com/c_1094553212761309184
 
 ### [libuv之idle、check、prepare---loop-watcher.c](https://blog.csdn.net/THEANARKH/article/details/84888799)
 ### [libuv之定时器---timer.c](https://blog.csdn.net/THEANARKH/article/details/84889133)
