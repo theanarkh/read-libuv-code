@@ -217,17 +217,20 @@ void uv__io_poll(uv_loop_t* loop, int timeout) {
     assert(QUEUE_EMPTY(&loop->watcher_queue));
     return;
   }
-
+  // 遍历io观察者队列
   while (!QUEUE_EMPTY(&loop->watcher_queue)) {
+    // 取出当前头节点
     q = QUEUE_HEAD(&loop->watcher_queue);
+    // 脱离队列
     QUEUE_REMOVE(q);
+    // 初始化（重置）节点的前后指针
     QUEUE_INIT(q);
-
+	// 通过结构体成功获取结构体首地址
     w = QUEUE_DATA(q, uv__io_t, watcher_queue);
     assert(w->pevents != 0);
     assert(w->fd >= 0);
     assert(w->fd < (int) loop->nwatchers);
-
+    // 设置当前感兴趣的事件
     e.events = w->pevents;
     // 这里使用了fd字段，事件触发后再通过fd从watchs字段里找到对应的io观察者，没有使用ptr指向io观察者的方案
     e.data.fd = w->fd;

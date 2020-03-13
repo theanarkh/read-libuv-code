@@ -318,18 +318,19 @@ int uv_backend_timeout(const uv_loop_t* loop) {
   // 下面几种情况下返回0，即不阻塞在epoll_wait 
   if (loop->stop_flag != 0)
     return 0;
+  // 没有东西需要处理，则不需要阻塞poll io阶段
   if (!uv__has_active_handles(loop) && !uv__has_active_reqs(loop))
     return 0;
-  // 
+  // idle阶段有任务，不阻塞，尽快返回直接idle任务
   if (!QUEUE_EMPTY(&loop->idle_handles))
     return 0;
-
+  // 同上
   if (!QUEUE_EMPTY(&loop->pending_queue))
     return 0;
-
+  // 同上
   if (loop->closing_handles)
     return 0;
-  // 返回下一个最早过期的时间
+  // 返回下一个最早过期的时间，即最早超时的节点
   return uv__next_timeout(loop);
 }
 
@@ -894,7 +895,7 @@ void uv__io_start(uv_loop_t* loop, uv__io_t* w, unsigned int events) {
   if (w->events == w->pevents)
     return;
 #endif
-  // 如果队列为空则把w挂载到watcher_queue队列中
+  // io观察者没有挂载在其他地方则插入libuv的io观察者队列
   if (QUEUE_EMPTY(&w->watcher_queue))
     QUEUE_INSERT_TAIL(&loop->watcher_queue, &w->watcher_queue);
   // 保存映射关系
