@@ -91,19 +91,20 @@ static int new_inotify_fd(void) {
   return fd;
 }
 
-
 static int init_inotify(uv_loop_t* loop) {
   int err;
-
+  // 初始化过了则直接返回 	
   if (loop->inotify_fd != -1)
     return 0;
-
+  // 调用操作系统的inotify_init函数申请一个inotify实例，并设置UV__IN_NONBLOCK，UV__IN_CLOEXEC标记
   err = new_inotify_fd();
   if (err < 0)
     return err;
-
+  // 记录inotify实例对应的文件描述符
   loop->inotify_fd = err;
+  // inotify_read_watcher是一个io观察者，uv__io_init设置io观察者的文件描述符（待观察的文件）和回调
   uv__io_init(&loop->inotify_read_watcher, uv__inotify_read, loop->inotify_fd);
+  // 往libuv中注册该io观察者，感兴趣的事件为可读
   uv__io_start(loop, &loop->inotify_read_watcher, POLLIN);
 
   return 0;
@@ -216,9 +217,10 @@ static void uv__inotify_read(uv_loop_t* loop,
     }
 
     assert(size > 0); /* pre-2.6.21 thing, size=0 == read buffer too small */
-
+    // 处理buffer的信息
     /* Now we have one or more inotify_event structs. */
     for (p = buf; p < buf + size; p += sizeof(*e) + e->len) {
+      // buffer里是多个uv__inotify_event结构体，里面保存了事件信息和文件对应的id（wd字段）
       e = (const struct uv__inotify_event*)p;
 
       events = 0;
@@ -226,7 +228,7 @@ static void uv__inotify_read(uv_loop_t* loop,
         events |= UV_CHANGE;
       if (e->mask & ~(UV__IN_ATTRIB|UV__IN_MODIFY))
         events |= UV_RENAME;
-
+      // 通过文件对应的id（wd字段）从红黑树中找到对应的节点
       w = find_watcher(loop, e->wd);
       if (w == NULL)
         continue; /* Stale event, no watchers left. */
@@ -249,14 +251,18 @@ static void uv__inotify_read(uv_loop_t* loop,
        * not to free watcher_list.
        */
       w->iterating = 1;
+      // 把红黑树中，wd对应节点的handle队列移到queue变量，准备处理
       QUEUE_MOVE(&w->watchers, &queue);
       while (!QUEUE_EMPTY(&queue)) {
+        // 头结点
         q = QUEUE_HEAD(&queue);
+        // 通过结构体偏移拿到首地址
         h = QUEUE_DATA(q, uv_fs_event_t, watchers);
-
+		    // 从处理队列中移除
         QUEUE_REMOVE(q);
+        // 放回原队列
         QUEUE_INSERT_TAIL(&w->watchers, q);
-
+		    // 执行回调
         h->cb(h, path, events, 0);
       }
       /* done iterating, time to (maybe) free empty watcher_list */
@@ -284,11 +290,11 @@ int uv_fs_event_start(uv_fs_event_t* handle,
 
   if (uv__is_active(handle))
     return UV_EINVAL;
-
+  // 申请一个inotify实例
   err = init_inotify(handle->loop);
   if (err)
     return err;
-
+  // 监听的事件
   events = UV__IN_ATTRIB
          | UV__IN_CREATE
          | UV__IN_MODIFY
@@ -297,15 +303,16 @@ int uv_fs_event_start(uv_fs_event_t* handle,
          | UV__IN_MOVE_SELF
          | UV__IN_MOVED_FROM
          | UV__IN_MOVED_TO;
-
+  // 调用操作系统的函数注册一个待监听的文件，返回一个对应于该文件的id
   wd = uv__inotify_add_watch(handle->loop->inotify_fd, path, events);
   if (wd == -1)
     return UV__ERR(errno);
-
+  // 判断该文件是不是已经注册过了
   w = find_watcher(handle->loop, wd);
+  // 已经注册过则跳过插入的逻辑
   if (w)
     goto no_insert;
-
+  // 还没有注册过则插入libuv维护的红黑树
   w = uv__malloc(sizeof(*w) + strlen(path) + 1);
   if (w == NULL)
     return UV_ENOMEM;
@@ -314,11 +321,15 @@ int uv_fs_event_start(uv_fs_event_t* handle,
   w->path = strcpy((char*)(w + 1), path);
   QUEUE_INIT(&w->watchers);
   w->iterating = 0;
+  // 插入libuv维护的红黑树,inotify_watchers是根节点
   RB_INSERT(watcher_root, CAST(&handle->loop->inotify_watchers), w);
 
 no_insert:
+  // 激活该handle
   uv__handle_start(handle);
+  // 同一个文件可能注册了很多个回调，w对应一个文件，注册在用一个文件的回调排成队
   QUEUE_INSERT_TAIL(&w->watchers, &handle->watchers);
+  // 保存信息和回调
   handle->path = w->path;
   handle->cb = cb;
   handle->wd = wd;

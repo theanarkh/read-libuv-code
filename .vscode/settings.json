@@ -1,5 +1,6 @@
 {
     "files.associations": {
-        "linux-syscalls.h": "c"
+        "linux-syscalls.h": "c",
+        "tree.h": "c"
     }
 }
