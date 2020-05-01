@@ -214,8 +214,9 @@ static void init_threads(void) {
   unsigned int i;
   const char* val;
   uv_sem_t sem;
-
+  // 默认线程数
   nthreads = ARRAY_SIZE(default_threads);
+  // 判断用户是否在环境变量中设置了线程数
   val = getenv("UV_THREADPOOL_SIZE");
   if (val != NULL)
     nthreads = atoi(val);
@@ -300,24 +301,32 @@ static int uv__work_cancel(uv_loop_t* loop, uv_req_t* req, struct uv__work* w) {
   uv_mutex_lock(&mutex);
   // 加锁，为了判断w->wq是否为空
   uv_mutex_lock(&w->loop->wq_mutex);
-  // w在一个队列中并work不为空，则可取消
+  /*
+    w在在任务队列中并且任务函数work不为空，则可取消，
+    在work函数中，如果执行完了任务，会把work置NULL，
+    所以一个任务可以取消的前提是他还没执行完。或者说还没执行过
+  */
   cancelled = !QUEUE_EMPTY(&w->wq) && w->work != NULL;
-  // 删除该节点
+  // 从任务队列中删除该节点
   if (cancelled)
     QUEUE_REMOVE(&w->wq);
 
   uv_mutex_unlock(&w->loop->wq_mutex);
   uv_mutex_unlock(&mutex);
-
+  // 不能取消
   if (!cancelled)
     return UV_EBUSY;
   // 重置回调函数
   w->work = uv__cancelled;
  
   uv_mutex_lock(&loop->wq_mutex);
-   // 插入loop的wq队列
+   /*
+     插入loop的wq队列，对于取消的动作，libuv认为是任务执行完了。
+     所以插入已完成的队列，不过他的回调是uv__cancelled函数，
+     而不是用户设置的回调
+   */
   QUEUE_INSERT_TAIL(&loop->wq, &w->wq);
-  // 通知主线程执行任务回调
+  // 通知主线程有任务完成
   uv_async_send(&loop->wq_async);
   uv_mutex_unlock(&loop->wq_mutex);
 

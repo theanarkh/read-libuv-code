@@ -142,9 +142,37 @@ int uv_getaddrinfo(uv_loop_t* loop,
                    uv_getaddrinfo_t* req,
                    // 解析完后的上层回调
                    uv_getaddrinfo_cb cb,
+                   // 需要解析的名字
                    const char* hostname,
+                   // 查询的过滤条件：服务名。比如http smtp。也可以是一个端口。见下面注释
                    const char* service,
+                   // 其他查询过滤条件
                    const struct addrinfo* hints) {
+  /*
+    service 
+           netstat         15/tcp
+           qotd            17/tcp          quote
+           msp             18/tcp          # message send protocol
+           msp             18/udp          # message send protocol
+           chargen         19/tcp          ttytst source
+           chargen         19/udp          ttytst source
+           ftp             21/tcp
+           telnet          23/tcp
+
+    struct addrinfo {
+          // 各种标记
+          int              ai_flags;
+          // 下面三个参数对应socket函数的三个入参。
+          int              ai_family;
+          int              ai_socktype;
+          int              ai_protocol;
+          // ai_addr结构体长度 
+          socklen_t        ai_addrlen;
+          struct sockaddr *ai_addr;
+          char            *ai_canonname;
+          struct addrinfo *ai_next;
+    };
+  */
   size_t hostname_len;
   size_t service_len;
   size_t hints_len;
