@@ -23,9 +23,9 @@ typedef void *QUEUE[2];
 /* Private macros. */
 #define QUEUE_NEXT(q)       (*(QUEUE **) &((*(q))[0])) // 得到一个指向数组指针的指针，即第0个元素里的地址
 #define QUEUE_PREV(q)       (*(QUEUE **) &((*(q))[1]))
-// 拿到q对应节点的prev字段地址，然后在拿到前面节点的next字段的地址 
+
 #define QUEUE_PREV_NEXT(q)  (QUEUE_NEXT(QUEUE_PREV(q)))
-// 拿到q对应节点的next字段地址，然后在拿到后面节点的prev字段的地址 
+
 #define QUEUE_NEXT_PREV(q)  (QUEUE_PREV(QUEUE_NEXT(q)))
 
 /* Public macros. */
