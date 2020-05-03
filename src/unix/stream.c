@@ -472,7 +472,7 @@ void uv__stream_destroy(uv_stream_t* stream) {
      * callee that the handle has been destroyed.
      */
     uv__req_unregister(stream->loop, stream->shutdown_req);
-    // 调用上传回调
+    // 调用回调
     stream->shutdown_req->cb(stream->shutdown_req, UV_ECANCELED);
     stream->shutdown_req = NULL;
   }
@@ -566,7 +566,7 @@ void uv__server_io(uv_loop_t* loop, uv__io_t* w, unsigned int events) {
     UV_DEC_BACKLOG(w)
     // 保存通信socket对应的文件描述符
     stream->accepted_fd = err;
-    // 有连接，执行上传回调
+    // 有连接，执行上层回调
     stream->connection_cb(stream, 0);
     // 只能accept一个fd，先解除io的事件，等到用户消费了accepted_fd再重新注册事件
     if (stream->accepted_fd != -1) {
@@ -1041,6 +1041,7 @@ static void uv__write_callbacks(uv_stream_t* stream) {
     uv__req_unregister(stream->loop, req);
 
     if (req->bufs != NULL) {
+      // 如果uv__write_req_size非0，说明写失败了。这部分数据被丢弃，所以相当于写成功，更新write_queue_size
       stream->write_queue_size -= uv__write_req_size(req);
       // 不相等说明做了扩容处理，需要free掉
       if (req->bufs != req->bufsml)
@@ -1049,6 +1050,7 @@ static void uv__write_callbacks(uv_stream_t* stream) {
     }
 
     /* NOTE: call callback AFTER freeing the request data. */
+    // 执行写完成后的回调
     if (req->cb)
       req->cb(req, req->error);
   }
@@ -1362,12 +1364,12 @@ static void uv__read(uv_stream_t* stream) {
 #undef UV__CMSG_FD_COUNT
 #undef UV__CMSG_FD_SIZE
 
-
+// 关闭流的写端
 int uv_shutdown(uv_shutdown_t* req, uv_stream_t* stream, uv_shutdown_cb cb) {
   assert(stream->type == UV_TCP ||
          stream->type == UV_TTY ||
          stream->type == UV_NAMED_PIPE);
-
+  // 流是可写的，并且还没关闭写端，也不是处于正在关闭状态
   if (!(stream->flags & UV_HANDLE_WRITABLE) ||
       stream->flags & UV_HANDLE_SHUT ||
       stream->flags & UV_HANDLE_SHUTTING ||
@@ -1679,7 +1681,7 @@ int uv_read_start(uv_stream_t* stream,
 
   if (stream->flags & UV_HANDLE_CLOSING)
     return UV_EINVAL;
-
+  // 不可读
   if (!(stream->flags & UV_HANDLE_READABLE))
     return -ENOTCONN;
 
@@ -1696,6 +1698,7 @@ int uv_read_start(uv_stream_t* stream,
   assert(alloc_cb);
 
   stream->read_cb = read_cb;
+  // 分配内存函数，用于存储读取的数据
   stream->alloc_cb = alloc_cb;
   // 注册读事件
   uv__io_start(stream->loop, &stream->io_watcher, POLLIN);
@@ -1709,9 +1712,10 @@ int uv_read_start(uv_stream_t* stream,
 int uv_read_stop(uv_stream_t* stream) {
   if (!(stream->flags & UV_HANDLE_READING))
     return 0;
-
+  // 撤销等待读事件
   stream->flags &= ~UV_HANDLE_READING;
   uv__io_stop(stream->loop, &stream->io_watcher, POLLIN);
+  // 对写事件也不感兴趣，停掉handle
   if (!uv__io_active(&stream->io_watcher, POLLOUT))
     uv__handle_stop(stream);
   uv__stream_osx_interrupt_select(stream);
@@ -1773,25 +1777,29 @@ void uv__stream_close(uv_stream_t* handle) {
     handle->select = NULL;
   }
 #endif /* defined(__APPLE__) */
-
+  // 删除io观察者，移出pending队列
   uv__io_close(handle->loop, &handle->io_watcher);
+  // 停止读
   uv_read_stop(handle);
+  // 停掉handle
   uv__handle_stop(handle);
+  // 不可读、写
   handle->flags &= ~(UV_HANDLE_READABLE | UV_HANDLE_WRITABLE);
-
+  // 关闭非标准流的文件描述符
   if (handle->io_watcher.fd != -1) {
     /* Don't close stdio file descriptors.  Nothing good comes from it. */
     if (handle->io_watcher.fd > STDERR_FILENO)
       uv__close(handle->io_watcher.fd);
     handle->io_watcher.fd = -1;
   }
-
+  // 关闭通信socket对应的文件描述符
   if (handle->accepted_fd != -1) {
     uv__close(handle->accepted_fd);
     handle->accepted_fd = -1;
   }
 
   /* Close all queued fds */
+  // 同上，这是在排队等待处理的通信socket
   if (handle->queued_fds != NULL) {
     queued_fds = handle->queued_fds;
     for (i = 0; i < queued_fds->offset; i++)

@@ -48,7 +48,7 @@ static int new_socket(uv_tcp_t* handle, int domain, unsigned long flags) {
     uv__close(sockfd);
     return err;
   }
-  // 绑定本机随意的地址
+  // 设置了需要绑定标记UV_HANDLE_BOUND	 
   if (flags & UV_HANDLE_BOUND) {
     /* Bind this new socket to an arbitrary port */
     slen = sizeof(saddr);
@@ -81,16 +81,20 @@ static int maybe_new_socket(uv_tcp_t* handle, int domain, unsigned long flags) {
   if (uv__stream_fd(handle) != -1) {
 
     if (flags & UV_HANDLE_BOUND) {
-      // handle的flag是在new_socket里设置的，如果有这个标记说明已经执行过下面的操作了
+      /*
+	      流是否已经绑定到一个地址了。handle的flag是在new_socket里设置的，
+	      如果有这个标记说明已经执行过绑定了，直接更新flags就行。
+      */
       if (handle->flags & UV_HANDLE_BOUND) {
         /* It is already bound to a port. */
         handle->flags |= flags;
         return 0;
       }
-      // 有socket fd，并设置了自动绑定，并且还没有绑定过socket地址（可能是new_socket里后面一段代码报错了）
+      // 有socket fd，但是可能还没绑定到一个地址
       /* Query to see if tcp socket is bound. */
       slen = sizeof(saddr);
       memset(&saddr, 0, sizeof(saddr));
+      // 获取socket绑定到的地址
       if (getsockname(uv__stream_fd(handle), (struct sockaddr*) &saddr, &slen))
         return UV__ERR(errno);
       // 绑定过了socket地址，则更新flags就行
@@ -102,7 +106,7 @@ static int maybe_new_socket(uv_tcp_t* handle, int domain, unsigned long flags) {
         handle->flags |= flags;
         return 0;
       }
-      // 没绑定则绑定到getsockname返回的随机地址
+      // 没绑定则绑定到随机地址，bind中实现
       /* Bind to arbitrary port */
       if (bind(uv__stream_fd(handle), (struct sockaddr*) &saddr, slen))
         return UV__ERR(errno);
