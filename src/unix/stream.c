@@ -566,15 +566,15 @@ void uv__server_io(uv_loop_t* loop, uv__io_t* w, unsigned int events) {
     UV_DEC_BACKLOG(w)
     // 保存通信socket对应的文件描述符
     stream->accepted_fd = err;
-    // 有连接，执行上层回调
+    // 有连接，执行上层回调，connection_cb一般会调用uv_accept消费accepted_fd。然后重新注册等待可读事件
     stream->connection_cb(stream, 0);
-    // 只能accept一个fd，先解除io的事件，等到用户消费了accepted_fd再重新注册事件
+    // 用户还没有消费accept_fd。先解除io的事件，等到用户调用uv_accept消费了accepted_fd再重新注册事件
     if (stream->accepted_fd != -1) {
       /* The user hasn't yet accepted called uv_accept() */
       uv__io_stop(loop, &stream->io_watcher, POLLIN);
       return;
     }
-    // 定时睡眠一会（可被信号唤醒），让其他进程也有机会accept
+    // 定时睡眠一会（可被信号唤醒），分点给别的进程accept
     if (stream->type == UV_TCP &&
         (stream->flags & UV_HANDLE_TCP_SINGLE_ACCEPT)) {
       /* Give other processes a chance to accept connections. */

@@ -15,13 +15,13 @@ typedef struct {
     uv_write_t req;
     uv_buf_t buf;
 } write_req_t;
-
+// 写成功后释放内容
 void free_write_req(uv_write_t *req) {
     write_req_t *wr = (write_req_t*) req;
     free(wr->buf.base);
     free(wr);
 }
-
+// 分配内存保存读取的数据
 void alloc_buffer(uv_handle_t *handle, size_t suggested_size, uv_buf_t *buf) {
   buf->base = malloc(suggested_size);
   buf->len = suggested_size;
@@ -35,13 +35,16 @@ void echo_write(uv_write_t *req, int status) {
 }
 
 void echo_read(uv_stream_t *client, ssize_t nread, const uv_buf_t *buf) {
+    // 有数据，则回写
     if (nread > 0) {
         write_req_t *req = (write_req_t*) malloc(sizeof(write_req_t));
+        // 指向客户端发送过来的数据
         req->buf = uv_buf_init(buf->base, nread);
+        // 回写给客户端，echo_write是写成功后的回调
         uv_write((uv_write_t*) req, client, &req->buf, 1, echo_write);
         return;
     }
-
+    // 没有数据了，关闭
     if (nread < 0) {
         if (nread != UV_EOF)
             fprintf(stderr, "Read error %s\n", uv_err_name(nread));
@@ -50,16 +53,22 @@ void echo_read(uv_stream_t *client, ssize_t nread, const uv_buf_t *buf) {
 
     free(buf->base);
 }
-
+// 有连接到来时的回调
 void on_new_connection(uv_stream_t *server, int status) {
     if (status == -1) {
         // error!
         return;
     }
-
+    // 有连接到来，申请一个结构体表示他
     uv_pipe_t *client = (uv_pipe_t*) malloc(sizeof(uv_pipe_t));
     uv_pipe_init(loop, client, 0);
+    // 把accept返回的fd记录到client，client是用于和客户端通信的结构体
     if (uv_accept(server, (uv_stream_t*) client) == 0) {
+        /*
+            注册读事件，等待客户端发送信息过来,
+            alloc_buffer分配内存保存客户端的发送过来的信息,
+            echo_read是回调
+        */
         uv_read_start((uv_stream_t*) client, alloc_buffer, echo_read);
     }
     else {
@@ -69,7 +78,9 @@ void on_new_connection(uv_stream_t *server, int status) {
 
 void remove_sock(int sig) {
     uv_fs_t req;
+    // 删除unix域对应的路径
     uv_fs_unlink(loop, &req, PIPENAME, NULL);
+    // 退出进程
     exit(0);
 }
 
@@ -78,17 +89,23 @@ int main() {
 
     uv_pipe_t server;
     uv_pipe_init(loop, &server, 0);
-
+    // 注册SIGINT信号的信号处理函数是remove_sock
     signal(SIGINT, remove_sock);
 
     int r;
+    // 绑定unix路径到socket
     if ((r = uv_pipe_bind(&server, PIPENAME))) {
         fprintf(stderr, "Bind error %s\n", uv_err_name(r));
         return 1;
     }
+    /*
+        把unix域对应的文件文件描述符设置为listen状态。
+        开启监听请求的到来，连接的最大个数是128。有连接时的回调是on_new_connection
+    */
     if ((r = uv_listen((uv_stream_t*) &server, 128, on_new_connection))) {
         fprintf(stderr, "Listen error %s\n", uv_err_name(r));
         return 2;
     }
+    // 启动事件循环
     return uv_run(loop, UV_RUN_DEFAULT);
 }

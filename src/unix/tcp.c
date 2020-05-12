@@ -225,10 +225,10 @@ int uv__tcp_connect(uv_connect_t* req,
   int r;
 
   assert(handle->type == UV_TCP);
-
+  // 已经发起了connect了
   if (handle->connect_req != NULL)
     return UV_EALREADY;  /* FIXME(bnoordhuis) UV_EINVAL or maybe UV_EBUSY. */
-
+  // 申请一个socket和绑定一个地址，如果还没有的话
   err = maybe_new_socket(handle,
                          addr->sa_family,
                          UV_HANDLE_READABLE | UV_HANDLE_WRITABLE);
@@ -342,12 +342,12 @@ int uv_tcp_listen(uv_tcp_t* tcp, int backlog, uv_connection_cb cb) {
 
   if (tcp->delayed_error)
     return tcp->delayed_error;
-
+  // 是否设置了不连续accept。默认是连续accept。
   if (single_accept == -1) {
     const char* val = getenv("UV_TCP_SINGLE_ACCEPT");
     single_accept = (val != NULL && atoi(val) != 0);  /* Off by default. */
   }
-
+  // 设置不连续accept
   if (single_accept)
     tcp->flags |= UV_HANDLE_TCP_SINGLE_ACCEPT;
 
@@ -359,11 +359,14 @@ int uv_tcp_listen(uv_tcp_t* tcp, int backlog, uv_connection_cb cb) {
   */
   flags |= UV_HANDLE_BOUND;
 #endif
-  // 可能还没有用于listen的fd，socket地址等，
+  /*
+    可能还没有用于listen的fd，socket地址等。
+    这里申请一个socket和绑定到一个地址（如果调listen之前没有调bind则绑定到随机地址）
+  */
   err = maybe_new_socket(tcp, AF_INET, flags);
   if (err)
     return err;
-
+  // 设置fd为listen状态
   if (listen(tcp->io_watcher.fd, backlog))
     return UV__ERR(errno);
   // 建立连接后的业务回调

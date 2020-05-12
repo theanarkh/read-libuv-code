@@ -108,9 +108,9 @@ int uv_pipe_listen(uv_pipe_t* handle, int backlog, uv_connection_cb cb) {
 
   if (listen(uv__stream_fd(handle), backlog))
     return UV__ERR(errno);
-  // 保存回调，有完成三次握手的连接时触发
+  // 保存回调，有进程调用connect的时候时触发，由uv__server_io函数触发
   handle->connection_cb = cb;
-  // 有完成三次握手的连接时触发（io观察者的fd在init函数里设置了）
+  // io观察者的回调，有进程调用connect的时候时触发（io观察者的fd在init函数里设置了）
   handle->io_watcher.cb = uv__server_io;
   // 注册io观察者到libuv，等待连接，即读事件到来
   uv__io_start(handle->loop, &handle->io_watcher, POLLIN);
@@ -180,12 +180,14 @@ void uv_pipe_connect(uv_connect_t* req,
   int err;
   int r;
 
+  // 判断是否已经有socket了，没有的话需要申请一个，见下面
   new_sock = (uv__stream_fd(handle) == -1);
   // 客户端还没有对应的socket fd
   if (new_sock) {
     err = uv__socket(AF_UNIX, SOCK_STREAM, 0);
     if (err < 0)
       goto out;
+    // 保存socket对应的文件描述符到io观察者
     handle->io_watcher.fd = err;
   }
 
